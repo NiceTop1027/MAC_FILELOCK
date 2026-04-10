@@ -392,7 +392,7 @@ static BOOL FLDecodeAdminLockedContainer(NSData *container,
             return;
         }
 
-        if (![fm trashItemAtURL:url resultingItemURL:nil error:&err]) {
+        if (![fm removeItemAtURL:url error:&err]) {
             chflags(lockURL.fileSystemRepresentation, 0);
             [fm removeItemAtURL:lockURL error:nil];
             dispatch_async(dispatch_get_main_queue(), ^{ done(nil, err); });

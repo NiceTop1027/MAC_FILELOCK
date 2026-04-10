@@ -138,7 +138,7 @@
     [vev addSubview:subtitle];
 
     NSTextField *body = [NSTextField labelWithString:
-                         @"파일을 잠그면 원본은 휴지통으로 이동되고, 같은 자리에 보호 파일이 생성됩니다.\nFinder에서는 확장자가 숨겨져 원래 이름처럼 보이며, 이름 변경이나 삭제도 막아둡니다."];
+                         @"파일을 잠그면 원본은 즉시 삭제되고, 같은 자리에 보호 파일이 생성됩니다.\nFinder에서는 확장자가 숨겨져 원래 이름처럼 보이며, 이름 변경이나 삭제도 막아둡니다."];
     body.font = [NSFont systemFontOfSize:13];
     body.textColor = NSColor.secondaryLabelColor;
     body.frame = NSMakeRect(128, H - 188, W - 168, 52);
@@ -228,7 +228,7 @@
     panel.canChooseFiles = YES;
     panel.canChooseDirectories = YES;
     panel.allowsMultipleSelection = YES;
-    panel.message = @"잠글 파일이나 폴더를 선택하세요. 원본은 휴지통으로 이동되고 같은 위치에 잠금 파일이 생성됩니다.";
+    panel.message = @"잠글 파일이나 폴더를 선택하세요. 원본은 즉시 삭제되고 같은 위치에 잠금 파일이 생성됩니다.";
     if ([panel runModal] != NSModalResponseOK || panel.URLs.count == 0) return;
 
     [self lockURLs:panel.URLs];
@@ -303,7 +303,7 @@
     }
 
     NSString *pw = [self askPassword:@"비밀번호 설정"
-                             message:[NSString stringWithFormat:@"%lu개 항목을 잠급니다.\n원본은 휴지통으로 이동되고, 같은 위치에 잠금 파일이 생성됩니다.", targets.count]
+                             message:[NSString stringWithFormat:@"%lu개 항목을 잠급니다.\n원본은 즉시 삭제되고, 같은 위치에 잠금 파일이 생성됩니다.", targets.count]
                              confirm:YES];
     if (!pw) return;
 
