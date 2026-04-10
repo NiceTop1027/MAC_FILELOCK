@@ -10,8 +10,7 @@
 - 잠금 파일 확장자 숨김
 - 잠금 파일 이름 변경 / 삭제 방지 플래그 적용
 - 관리자 전용 완전 해제 기능
-- 시작 시와 실행 중 주기적으로 GitHub Releases 업데이트 확인
-- 새 버전 감지 시 앱 안에서 바로 다운로드 / 릴리스 페이지 열기
+- Sparkle 기반 인앱 자동 업데이트
 
 ## 프로젝트 구조
 
@@ -22,9 +21,10 @@
 
 ## 로컬 빌드
 
-macOS에서 아래 명령으로 앱과 DMG를 같이 빌드합니다.
+macOS에서 아래 명령으로 Sparkle 프레임워크 준비 후 앱과 DMG를 빌드합니다.
 
 ```bash
+bash setup_sparkle.sh
 bash build.sh
 ```
 
@@ -46,7 +46,13 @@ bash build.sh
 - 소스코드: 저장소 자체
 - 설치 파일: `dist/FileLock.dmg`
 
-태그 릴리스(`v1.0.0` 같은 형식)를 만들면 GitHub Actions가 자동으로 macOS 빌드와 DMG 아티팩트를 생성하도록 설정되어 있습니다.
+태그 릴리스(`v1.0.4` 같은 형식)를 만들면 GitHub Actions가 자동으로 macOS 빌드와 DMG 아티팩트를 생성하도록 설정되어 있습니다.
+
+Sparkle appcast 갱신은 로컬에서 아래처럼 수행합니다.
+
+```bash
+bash publish_update.sh 1.0.4 dist/FileLock.dmg
+```
 
 ## 릴리스 절차 예시
 

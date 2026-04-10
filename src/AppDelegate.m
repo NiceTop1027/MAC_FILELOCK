@@ -1,7 +1,7 @@
 #import "Vault.h"
-#import "Updater.h"
 #import <Cocoa/Cocoa.h>
 #import <CoreServices/CoreServices.h>
+#import <Sparkle/Sparkle.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
@@ -13,15 +13,11 @@
     NSMutableArray<NSURL *> *_pendingOpenURLs;
     BOOL _didFinishLaunching;
     NSString *_currentAdminPassword;
-    FLUpdater *_updater;
-    NSTimer *_updateTimer;
-    NSString *_lastNotifiedUpdateVersion;
-    BOOL _isCheckingForUpdates;
+    SPUStandardUpdaterController *_updaterController;
 }
 
 static NSString * const FLBundleIdentifier = @"com.filelock.app";
 static NSString * const FLLegacyLockFileExtension = @"lock";
-static NSTimeInterval const FLAutoUpdateCheckInterval = 1800.0;
 
 static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
     UTType *type = [UTType typeWithFilenameExtension:extension];
@@ -34,7 +30,10 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
     if (!_pendingOpenURLs) _pendingOpenURLs = [NSMutableArray new];
     _didFinishLaunching = YES;
-    _updater = [FLUpdater new];
+    _updaterController = [[SPUStandardUpdaterController alloc]
+                              initWithStartingUpdater:YES
+                              updaterDelegate:nil
+                              userDriverDelegate:nil];
 
     [self buildMenu];
     [self registerFileAssociations];
@@ -46,11 +45,9 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
     if (_pendingOpenURLs.count == 0) {
         [self showMainWindow];
         [NSApp activateIgnoringOtherApps:YES];
-        [self startAutomaticUpdateChecks:YES];
     } else {
         [NSApp activateIgnoringOtherApps:YES];
         [self flushPendingOpenURLs];
-        [self startAutomaticUpdateChecks:NO];
     }
 }
 
@@ -65,7 +62,6 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app {
-    [_updateTimer invalidate];
     [[Vault shared] cleanup];
     return NSTerminateNow;
 }
@@ -91,9 +87,10 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
     [appMenu addItemWithTitle:@"FileLock 정보"
                        action:@selector(orderFrontStandardAboutPanel:)
                 keyEquivalent:@""];
-    [appMenu addItemWithTitle:@"업데이트 확인…"
-                       action:@selector(checkForUpdates:)
-                keyEquivalent:@"u"];
+    NSMenuItem *updateItem = [appMenu addItemWithTitle:@"업데이트 확인…"
+                                               action:@selector(checkForUpdates:)
+                                        keyEquivalent:@"u"];
+    updateItem.target = _updaterController;
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"FileLock 종료"
                        action:@selector(terminate:)
@@ -202,19 +199,11 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
     [vev addSubview:adminBtn];
 
     NSButton *updateBtn = [NSButton buttonWithTitle:@"업데이트 확인…"
-                                             target:self
+                                             target:_updaterController
                                              action:@selector(checkForUpdates:)];
     updateBtn.bezelStyle = NSBezelStyleRounded;
     updateBtn.frame = NSMakeRect(40, 56, 180, 32);
     [vev addSubview:updateBtn];
-
-    NSTextField *tip = [NSTextField labelWithString:
-                        @"실행 중에는 GitHub Releases를 자동으로 확인해 새 버전이 나오면 바로 알리고 다운로드할 수 있습니다."];
-    tip.font = [NSFont systemFontOfSize:12];
-    tip.textColor = NSColor.tertiaryLabelColor;
-    tip.frame = NSMakeRect(232, 52, W - 272, 38);
-    tip.lineBreakMode = NSLineBreakByWordWrapping;
-    [vev addSubview:tip];
 
     _statusLabel = [NSTextField labelWithString:@""];
     _statusLabel.font = [NSFont systemFontOfSize:12];
@@ -225,25 +214,6 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
 
 - (void)setStatusText:(NSString *)text {
     [_statusLabel setStringValue:(text ?: @"")];
-}
-
-- (void)startAutomaticUpdateChecks:(BOOL)checkNow {
-    [_updateTimer invalidate];
-    _updateTimer = [NSTimer scheduledTimerWithTimeInterval:FLAutoUpdateCheckInterval
-                                                    target:self
-                                                  selector:@selector(runAutomaticUpdateCheck:)
-                                                  userInfo:nil
-                                                   repeats:YES];
-    if (!checkNow) return;
-
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        [self checkForUpdatesSilently:YES];
-    });
-}
-
-- (void)runAutomaticUpdateCheck:(NSTimer *)timer {
-    [self checkForUpdatesSilently:YES];
 }
 
 - (void)flushPendingOpenURLs {
@@ -359,11 +329,6 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
     }];
 }
 
-- (IBAction)checkForUpdates:(id)sender {
-    [self showMainWindow];
-    [self checkForUpdatesSilently:NO];
-}
-
 - (void)lockURLs:(NSArray<NSURL *> *)urls {
     NSMutableArray<NSURL *> *targets = [NSMutableArray new];
     for (NSURL *url in urls) {
@@ -428,73 +393,6 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
         [[NSWorkspace sharedWorkspace] openURL:openedURL];
         [self setStatusText:[NSString stringWithFormat:@"'%@' 열림", openedURL.lastPathComponent]];
     }];
-}
-
-- (void)checkForUpdatesSilently:(BOOL)silent {
-    if (_isCheckingForUpdates) return;
-    _isCheckingForUpdates = YES;
-    [self setStatusText:@"업데이트 확인 중…"];
-
-    [_updater checkForUpdatesWithCompletion:^(FLReleaseInfo *info, BOOL hasUpdate, NSError *err) {
-        self->_isCheckingForUpdates = NO;
-
-        if (err) {
-            if (silent) {
-                [self setStatusText:@"업데이트 확인 실패"];
-            } else {
-                [self setStatusText:@""];
-                [self showError:err];
-            }
-            return;
-        }
-
-        if (hasUpdate) {
-            [self setStatusText:[NSString stringWithFormat:@"새 버전 %@ 사용 가능", info.version]];
-            BOOL shouldPrompt = !silent || ![self->_lastNotifiedUpdateVersion isEqualToString:info.version];
-            if (shouldPrompt) {
-                self->_lastNotifiedUpdateVersion = [info.version copy];
-                [self presentUpdateAlert:info];
-            }
-            return;
-        }
-
-        [self setStatusText:[NSString stringWithFormat:@"최신 버전 %@ 사용 중", [FLUpdater currentAppVersion]]];
-        if (!silent) {
-            NSAlert *alert = [NSAlert new];
-            alert.messageText = @"이미 최신 버전입니다.";
-            alert.informativeText = [NSString stringWithFormat:@"현재 버전 %@을 사용 중입니다.", [FLUpdater currentAppVersion]];
-            [alert addButtonWithTitle:@"확인"];
-            [alert runModal];
-        }
-    }];
-}
-
-- (void)presentUpdateAlert:(FLReleaseInfo *)info {
-    [NSApp activateIgnoringOtherApps:YES];
-
-    NSAlert *alert = [NSAlert new];
-    alert.messageText = [NSString stringWithFormat:@"새 업데이트 %@가 있습니다.", info.version];
-    alert.informativeText = @"지금 다운로드해서 최신 DMG를 열 수 있습니다.";
-    [alert addButtonWithTitle:@"다운로드"];
-    [alert addButtonWithTitle:@"릴리스 보기"];
-    [alert addButtonWithTitle:@"나중에"];
-
-    NSModalResponse response = [alert runModal];
-    if (response == NSAlertFirstButtonReturn) {
-        [self openUpdateURL:info.downloadURL ?: info.releaseURL];
-    } else if (response == NSAlertSecondButtonReturn) {
-        [self openUpdateURL:info.releaseURL ?: info.downloadURL];
-    }
-}
-
-- (void)openUpdateURL:(NSURL *)url {
-    if (!url) {
-        [self showError:[NSError errorWithDomain:@"com.filelock.update"
-                                            code:3
-                                        userInfo:@{NSLocalizedDescriptionKey: @"업데이트 다운로드 주소를 찾지 못했습니다."}]];
-        return;
-    }
-    [[NSWorkspace sharedWorkspace] openURL:url];
 }
 
 - (BOOL)authenticateAdmin {

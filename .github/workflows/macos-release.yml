@@ -17,6 +17,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Prepare Sparkle Framework
+        run: bash setup_sparkle.sh --framework-only
+
       - name: Build App And DMG
         run: bash build.sh
 
