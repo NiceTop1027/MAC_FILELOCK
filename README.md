@@ -1,15 +1,17 @@
 # FileLock
 
-`FileLock`은 macOS에서 파일을 잠그고 `.lock` 보호 파일로 관리하는 Objective-C 데스크톱 앱입니다.
+`FileLock`은 macOS에서 파일을 잠그고 `.filelock` 보호 파일로 관리하는 Objective-C 데스크톱 앱입니다.
 
 ## 주요 기능
 
-- 일반 파일 또는 폴더를 `.lock` 보호 파일로 변환
+- 일반 파일 또는 폴더를 `.filelock` 보호 파일로 변환
 - 잠금이 끝나면 원본은 휴지통이 아니라 즉시 삭제
 - Finder에서 보호 파일을 더블클릭하면 비밀번호 입력 후 열기
 - 잠금 파일 확장자 숨김
 - 잠금 파일 이름 변경 / 삭제 방지 플래그 적용
 - 관리자 전용 완전 해제 기능
+- 시작 시와 실행 중 주기적으로 GitHub Releases 업데이트 확인
+- 새 버전 감지 시 앱 안에서 바로 다운로드 / 릴리스 페이지 열기
 
 ## 프로젝트 구조
 
@@ -35,7 +37,7 @@ bash build.sh
 
 1. `FileLock.dmg`를 엽니다.
 2. `FileLock.app`을 `Applications`로 드래그합니다.
-3. 처음 실행 후 Finder에서 `.lock` 파일을 열면 FileLock이 연결됩니다.
+3. 처음 실행 후 Finder에서 `.filelock` 파일을 열면 FileLock이 연결됩니다.
 
 ## GitHub 업로드 방식
 

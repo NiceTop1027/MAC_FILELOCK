@@ -8,7 +8,8 @@ static const uint8_t kLockMagicV2[]  = { 'F', 'L', 'K', '2' };
 static const uint8_t kPayloadMagic[] = { 'F', 'L', 'P', '1' };
 static const NSUInteger kMagicLen    = 4;
 static const NSUInteger kLenLen      = 4;
-static NSString * const kAdminRecoveryKey = @"6301d3a376dd1de392d3fdf7cb4da03bce281c6fa530b8e5263158e65b43468f";
+static NSString * const kAdminRecoveryKey = @"6826afc83d81ae25c2c08b8745106a368c0631a866652b1e14206968f7d81a68";
+NSString * const FLLockFileExtension = @"filelock";
 
 static NSError *FLMakeError(NSInteger code, NSString *message) {
     return [NSError errorWithDomain:FileLockErrorDomain
@@ -281,7 +282,8 @@ static BOOL FLDecodeAdminLockedContainer(NSData *container,
 }
 
 - (BOOL)isLockedFileURL:(NSURL *)url {
-    if ([url.pathExtension.lowercaseString isEqualToString:@"lock"]) return YES;
+    NSString *pathExtension = url.pathExtension.lowercaseString;
+    if ([pathExtension isEqualToString:FLLockFileExtension]) return YES;
     NSData *prefix = FLReadPrefix(url, kMagicLen);
     return FLContainerVersion(prefix) != 0;
 }
@@ -294,7 +296,7 @@ static BOOL FLDecodeAdminLockedContainer(NSData *container,
         NSError *err = nil;
 
         if ([self isLockedFileURL:url]) {
-            err = FLMakeError(FileLockErrorIO, @"이미 잠긴 .lock 파일입니다.");
+            err = FLMakeError(FileLockErrorIO, @"이미 잠긴 FileLock 보호 파일입니다.");
             dispatch_async(dispatch_get_main_queue(), ^{ done(nil, err); });
             return;
         }
@@ -307,9 +309,9 @@ static BOOL FLDecodeAdminLockedContainer(NSData *container,
         }
 
         NSURL *lockURL = [[url URLByDeletingLastPathComponent]
-                          URLByAppendingPathComponent:[url.lastPathComponent stringByAppendingString:@".lock"]];
+                          URLByAppendingPathComponent:[url.lastPathComponent stringByAppendingFormat:@".%@", FLLockFileExtension]];
         if ([fm fileExistsAtPath:lockURL.path]) {
-            err = FLMakeError(FileLockErrorIO, @"같은 위치에 이미 .lock 파일이 있습니다.");
+            err = FLMakeError(FileLockErrorIO, @"같은 위치에 이미 FileLock 보호 파일이 있습니다.");
             dispatch_async(dispatch_get_main_queue(), ^{ done(nil, err); });
             return;
         }

@@ -8,6 +8,7 @@ SRC="src"
 DIST="dist"
 BUNDLE="$DIST/$APP.app"
 ASSETS="assets"
+LOCK_EXT="filelock"
 
 echo "=== $APP 빌드 시작 ==="
 
@@ -23,11 +24,14 @@ echo "✓ 아이콘 생성 완료"
 clang \
   -fmodules \
   -framework Cocoa \
+  -framework CoreServices \
   -framework Security \
+  -framework UniformTypeIdentifiers \
   -fobjc-arc \
   -O2 \
   -o "$DIST/$APP" \
   "$SRC/Crypto.m" \
+  "$SRC/Updater.m" \
   "$SRC/Vault.m" \
   "$SRC/AppDelegate.m"
 
@@ -53,20 +57,44 @@ cat > "$BUNDLE/Contents/Info.plist" << 'PLIST'
   <key>CFBundleName</key>            <string>FileLock</string>
   <key>CFBundleDisplayName</key>     <string>FileLock</string>
   <key>CFBundleIdentifier</key>      <string>com.filelock.app</string>
-  <key>CFBundleVersion</key>         <string>1.0.0</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key>         <string>1.0.3</string>
+  <key>CFBundleShortVersionString</key><string>1.0.3</string>
   <key>CFBundleExecutable</key>      <string>FileLock</string>
   <key>CFBundleIconFile</key>        <string>FileLock.icns</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>    <string>com.filelock.protected-file</string>
+      <key>UTTypeDescription</key>   <string>FileLock Protected File</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>__LOCK_EXT__</string>
+        </array>
+        <key>public.mime-type</key>
+        <string>application/x-filelock</string>
+      </dict>
+    </dict>
+  </array>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
       <key>CFBundleTypeName</key>    <string>FileLock Protected File</string>
       <key>CFBundleTypeRole</key>    <string>Viewer</string>
       <key>LSHandlerRank</key>       <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.filelock.protected-file</string>
+      </array>
       <key>CFBundleTypeExtensions</key>
       <array>
-        <string>lock</string>
+        <string>__LOCK_EXT__</string>
       </array>
     </dict>
   </array>
@@ -76,6 +104,8 @@ cat > "$BUNDLE/Contents/Info.plist" << 'PLIST'
 </dict>
 </plist>
 PLIST
+
+perl -0pi -e 's/__LOCK_EXT__/'"$LOCK_EXT"'/g' "$BUNDLE/Contents/Info.plist"
 
 # PkgInfo 생성 (필수)
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"

@@ -1,5 +1,8 @@
 #import "Vault.h"
+#import "Updater.h"
 #import <Cocoa/Cocoa.h>
+#import <CoreServices/CoreServices.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 @end
@@ -10,13 +13,31 @@
     NSMutableArray<NSURL *> *_pendingOpenURLs;
     BOOL _didFinishLaunching;
     NSString *_currentAdminPassword;
+    FLUpdater *_updater;
+    NSTimer *_updateTimer;
+    NSString *_lastNotifiedUpdateVersion;
+    BOOL _isCheckingForUpdates;
+}
+
+static NSString * const FLBundleIdentifier = @"com.filelock.app";
+static NSString * const FLLegacyLockFileExtension = @"lock";
+static NSTimeInterval const FLAutoUpdateCheckInterval = 1800.0;
+
+static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
+    UTType *type = [UTType typeWithFilenameExtension:extension];
+    if (!type.identifier.length) return;
+    LSSetDefaultRoleHandlerForContentType((__bridge CFStringRef)type.identifier,
+                                          kLSRolesAll,
+                                          (__bridge CFStringRef)FLBundleIdentifier);
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
     if (!_pendingOpenURLs) _pendingOpenURLs = [NSMutableArray new];
     _didFinishLaunching = YES;
+    _updater = [FLUpdater new];
 
     [self buildMenu];
+    [self registerFileAssociations];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     NSImage *appIcon = [NSImage imageNamed:@"FileLock"];
     if (!appIcon) appIcon = [NSImage imageNamed:@"FileLock-mark"];
@@ -25,9 +46,11 @@
     if (_pendingOpenURLs.count == 0) {
         [self showMainWindow];
         [NSApp activateIgnoringOtherApps:YES];
+        [self startAutomaticUpdateChecks:YES];
     } else {
         [NSApp activateIgnoringOtherApps:YES];
         [self flushPendingOpenURLs];
+        [self startAutomaticUpdateChecks:NO];
     }
 }
 
@@ -42,6 +65,7 @@
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app {
+    [_updateTimer invalidate];
     [[Vault shared] cleanup];
     return NSTerminateNow;
 }
@@ -67,6 +91,9 @@
     [appMenu addItemWithTitle:@"FileLock 정보"
                        action:@selector(orderFrontStandardAboutPanel:)
                 keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"업데이트 확인…"
+                       action:@selector(checkForUpdates:)
+                keyEquivalent:@"u"];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"FileLock 종료"
                        action:@selector(terminate:)
@@ -88,6 +115,14 @@
     fileItem.submenu = fileMenu;
 
     NSApp.mainMenu = bar;
+}
+
+- (void)registerFileAssociations {
+    LSSetDefaultRoleHandlerForContentType(CFSTR("com.filelock.protected-file"),
+                                          kLSRolesAll,
+                                          (__bridge CFStringRef)FLBundleIdentifier);
+    FLRegisterPreferredHandlerForExtension(FLLockFileExtension);
+    FLRegisterPreferredHandlerForExtension(FLLegacyLockFileExtension);
 }
 
 - (void)showMainWindow {
@@ -131,14 +166,14 @@
     title.frame = NSMakeRect(128, H - 82, 220, 34);
     [vev addSubview:title];
 
-    NSTextField *subtitle = [NSTextField labelWithString:@"Finder에서 바로 여는 .lock 보호 파일"];
+    NSTextField *subtitle = [NSTextField labelWithString:[NSString stringWithFormat:@"Finder에서 바로 여는 .%@ 보호 파일", FLLockFileExtension]];
     subtitle.font = [NSFont systemFontOfSize:14];
     subtitle.textColor = NSColor.secondaryLabelColor;
     subtitle.frame = NSMakeRect(128, H - 110, 360, 20);
     [vev addSubview:subtitle];
 
     NSTextField *body = [NSTextField labelWithString:
-                         @"파일을 잠그면 원본은 즉시 삭제되고, 같은 자리에 보호 파일이 생성됩니다.\nFinder에서는 확장자가 숨겨져 원래 이름처럼 보이며, 이름 변경이나 삭제도 막아둡니다."];
+                         [NSString stringWithFormat:@"파일을 잠그면 원본은 즉시 삭제되고, 같은 자리에 .%@ 보호 파일이 생성됩니다.\nFinder에서는 확장자가 숨겨져 원래 이름처럼 보이며, 이름 변경이나 삭제도 막아둡니다.", FLLockFileExtension]];
     body.font = [NSFont systemFontOfSize:13];
     body.textColor = NSColor.secondaryLabelColor;
     body.frame = NSMakeRect(128, H - 188, W - 168, 52);
@@ -166,11 +201,18 @@
     adminBtn.frame = NSMakeRect(424, 112, 190, 40);
     [vev addSubview:adminBtn];
 
+    NSButton *updateBtn = [NSButton buttonWithTitle:@"업데이트 확인…"
+                                             target:self
+                                             action:@selector(checkForUpdates:)];
+    updateBtn.bezelStyle = NSBezelStyleRounded;
+    updateBtn.frame = NSMakeRect(40, 56, 180, 32);
+    [vev addSubview:updateBtn];
+
     NSTextField *tip = [NSTextField labelWithString:
-                        @"일반 txt/png/mp4 자체의 모든 접근을 macOS 일반 앱이 가로채는 것은 불가능합니다. 대신 잠긴 파일을 열 때는 항상 비밀번호가 뜨고, 영구 복원은 관리자 인증 뒤에만 가능합니다."];
+                        @"실행 중에는 GitHub Releases를 자동으로 확인해 새 버전이 나오면 바로 알리고 다운로드할 수 있습니다."];
     tip.font = [NSFont systemFontOfSize:12];
     tip.textColor = NSColor.tertiaryLabelColor;
-    tip.frame = NSMakeRect(40, 62, W - 80, 34);
+    tip.frame = NSMakeRect(232, 52, W - 272, 38);
     tip.lineBreakMode = NSLineBreakByWordWrapping;
     [vev addSubview:tip];
 
@@ -183,6 +225,25 @@
 
 - (void)setStatusText:(NSString *)text {
     [_statusLabel setStringValue:(text ?: @"")];
+}
+
+- (void)startAutomaticUpdateChecks:(BOOL)checkNow {
+    [_updateTimer invalidate];
+    _updateTimer = [NSTimer scheduledTimerWithTimeInterval:FLAutoUpdateCheckInterval
+                                                    target:self
+                                                  selector:@selector(runAutomaticUpdateCheck:)
+                                                  userInfo:nil
+                                                   repeats:YES];
+    if (!checkNow) return;
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [self checkForUpdatesSilently:YES];
+    });
+}
+
+- (void)runAutomaticUpdateCheck:(NSTimer *)timer {
+    [self checkForUpdatesSilently:YES];
 }
 
 - (void)flushPendingOpenURLs {
@@ -206,10 +267,13 @@
 
     NSMutableArray<NSURL *> *locked = [NSMutableArray new];
     NSMutableArray<NSURL *> *plain = [NSMutableArray new];
+    NSMutableArray<NSURL *> *unsupportedLegacy = [NSMutableArray new];
 
     for (NSURL *url in urls) {
         if ([[Vault shared] isLockedFileURL:url]) {
             [locked addObject:url];
+        } else if ([url.pathExtension.lowercaseString isEqualToString:FLLegacyLockFileExtension]) {
+            [unsupportedLegacy addObject:url];
         } else {
             [plain addObject:url];
         }
@@ -217,6 +281,12 @@
 
     [NSApp activateIgnoringOtherApps:YES];
 
+    if (unsupportedLegacy.count > 0) {
+        [self showError:[NSError errorWithDomain:@"com.filelock.ui"
+                                            code:4
+                                        userInfo:@{NSLocalizedDescriptionKey:
+                                                       @"선택한 .lock 파일은 FileLock 잠금 파일이 아닙니다. 새로 잠근 파일은 .filelock 형식으로 만들어집니다."}]];
+    }
     if (plain.count > 0) [self lockURLs:plain];
     for (NSURL *url in locked) [self promptAndOpenLockedURL:url];
 }
@@ -289,6 +359,11 @@
     }];
 }
 
+- (IBAction)checkForUpdates:(id)sender {
+    [self showMainWindow];
+    [self checkForUpdatesSilently:NO];
+}
+
 - (void)lockURLs:(NSArray<NSURL *> *)urls {
     NSMutableArray<NSURL *> *targets = [NSMutableArray new];
     for (NSURL *url in urls) {
@@ -353,6 +428,73 @@
         [[NSWorkspace sharedWorkspace] openURL:openedURL];
         [self setStatusText:[NSString stringWithFormat:@"'%@' 열림", openedURL.lastPathComponent]];
     }];
+}
+
+- (void)checkForUpdatesSilently:(BOOL)silent {
+    if (_isCheckingForUpdates) return;
+    _isCheckingForUpdates = YES;
+    [self setStatusText:@"업데이트 확인 중…"];
+
+    [_updater checkForUpdatesWithCompletion:^(FLReleaseInfo *info, BOOL hasUpdate, NSError *err) {
+        self->_isCheckingForUpdates = NO;
+
+        if (err) {
+            if (silent) {
+                [self setStatusText:@"업데이트 확인 실패"];
+            } else {
+                [self setStatusText:@""];
+                [self showError:err];
+            }
+            return;
+        }
+
+        if (hasUpdate) {
+            [self setStatusText:[NSString stringWithFormat:@"새 버전 %@ 사용 가능", info.version]];
+            BOOL shouldPrompt = !silent || ![self->_lastNotifiedUpdateVersion isEqualToString:info.version];
+            if (shouldPrompt) {
+                self->_lastNotifiedUpdateVersion = [info.version copy];
+                [self presentUpdateAlert:info];
+            }
+            return;
+        }
+
+        [self setStatusText:[NSString stringWithFormat:@"최신 버전 %@ 사용 중", [FLUpdater currentAppVersion]]];
+        if (!silent) {
+            NSAlert *alert = [NSAlert new];
+            alert.messageText = @"이미 최신 버전입니다.";
+            alert.informativeText = [NSString stringWithFormat:@"현재 버전 %@을 사용 중입니다.", [FLUpdater currentAppVersion]];
+            [alert addButtonWithTitle:@"확인"];
+            [alert runModal];
+        }
+    }];
+}
+
+- (void)presentUpdateAlert:(FLReleaseInfo *)info {
+    [NSApp activateIgnoringOtherApps:YES];
+
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = [NSString stringWithFormat:@"새 업데이트 %@가 있습니다.", info.version];
+    alert.informativeText = @"지금 다운로드해서 최신 DMG를 열 수 있습니다.";
+    [alert addButtonWithTitle:@"다운로드"];
+    [alert addButtonWithTitle:@"릴리스 보기"];
+    [alert addButtonWithTitle:@"나중에"];
+
+    NSModalResponse response = [alert runModal];
+    if (response == NSAlertFirstButtonReturn) {
+        [self openUpdateURL:info.downloadURL ?: info.releaseURL];
+    } else if (response == NSAlertSecondButtonReturn) {
+        [self openUpdateURL:info.releaseURL ?: info.downloadURL];
+    }
+}
+
+- (void)openUpdateURL:(NSURL *)url {
+    if (!url) {
+        [self showError:[NSError errorWithDomain:@"com.filelock.update"
+                                            code:3
+                                        userInfo:@{NSLocalizedDescriptionKey: @"업데이트 다운로드 주소를 찾지 못했습니다."}]];
+        return;
+    }
+    [[NSWorkspace sharedWorkspace] openURL:url];
 }
 
 - (BOOL)authenticateAdmin {
