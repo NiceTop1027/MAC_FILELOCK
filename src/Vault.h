@@ -2,6 +2,8 @@
 #import <Foundation/Foundation.h>
 
 BOOL FLAdminPasswordMatches(NSString *password);
+BOOL FLHasAdminPassword(void);
+BOOL FLConfigureAdminPassword(NSString *password, NSError **err);
 FOUNDATION_EXPORT NSString * const FLLockFileExtension;
 
 @interface Vault : NSObject

@@ -41,8 +41,13 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
     NSImage *appIcon = [NSImage imageNamed:@"FileLock"];
     if (!appIcon) appIcon = [NSImage imageNamed:@"FileLock-mark"];
     if (appIcon) [NSApp setApplicationIconImage:appIcon];
+    if (![self ensureAdminPasswordConfigured]) {
+        [NSApp terminate:nil];
+        return;
+    }
 
     if (_pendingOpenURLs.count == 0) {
+        [self scheduleStartupUpdateCheck];
         [self showMainWindow];
         [NSApp activateIgnoringOtherApps:YES];
     } else {
@@ -122,6 +127,44 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
     FLRegisterPreferredHandlerForExtension(FLLegacyLockFileExtension);
 }
 
+- (BOOL)ensureAdminPasswordConfigured {
+    if (FLHasAdminPassword()) return YES;
+
+    [NSApp activateIgnoringOtherApps:YES];
+
+    while (YES) {
+        NSString *pw = [self askPassword:@"관리자 비밀번호 설정"
+                                 message:@"처음 실행입니다.\n관리자 완전 해제 기능에 사용할 관리자 비밀번호를 설정하세요."
+                                 confirm:YES];
+        if (!pw) {
+            NSAlert *alert = [NSAlert new];
+            alert.messageText = @"관리자 비밀번호 설정이 필요합니다.";
+            alert.informativeText = @"FileLock를 사용하려면 첫 실행에서 관리자 비밀번호를 먼저 설정해야 합니다.";
+            [alert addButtonWithTitle:@"앱 종료"];
+            [alert runModal];
+            return NO;
+        }
+
+        NSError *err = nil;
+        if (FLConfigureAdminPassword(pw, &err)) {
+            _currentAdminPassword = [pw copy];
+            return YES;
+        }
+
+        [self showError:err ?: [NSError errorWithDomain:@"com.filelock.admin"
+                                                   code:2
+                                               userInfo:@{NSLocalizedDescriptionKey: @"관리자 비밀번호를 저장하지 못했습니다."}]];
+    }
+}
+
+- (void)scheduleStartupUpdateCheck {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (!self->_updaterController.updater.canCheckForUpdates) return;
+        [self->_updaterController.updater checkForUpdatesInBackground];
+    });
+}
+
 - (void)showMainWindow {
     if (!_win) [self buildWindow];
     [_win center];
@@ -170,10 +213,10 @@ static void FLRegisterPreferredHandlerForExtension(NSString *extension) {
     [vev addSubview:subtitle];
 
     NSTextField *body = [NSTextField labelWithString:
-                         [NSString stringWithFormat:@"파일을 잠그면 원본은 즉시 삭제되고, 같은 자리에 .%@ 보호 파일이 생성됩니다.\nFinder에서는 확장자가 숨겨져 원래 이름처럼 보이며, 이름 변경이나 삭제도 막아둡니다.", FLLockFileExtension]];
+                         [NSString stringWithFormat:@"처음 실행 시 관리자 비밀번호를 설정합니다.\n파일을 잠그면 원본은 즉시 삭제되고, 같은 자리에 .%@ 보호 파일이 생성됩니다.\nFinder에서는 확장자가 숨겨져 원래 이름처럼 보이며, 이름 변경이나 삭제도 막아둡니다.", FLLockFileExtension]];
     body.font = [NSFont systemFontOfSize:13];
     body.textColor = NSColor.secondaryLabelColor;
-    body.frame = NSMakeRect(128, H - 188, W - 168, 52);
+    body.frame = NSMakeRect(128, H - 204, W - 168, 68);
     body.lineBreakMode = NSLineBreakByWordWrapping;
     [vev addSubview:body];
 

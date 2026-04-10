@@ -1,6 +1,7 @@
 #import "Vault.h"
 #import "Crypto.h"
 #import <CommonCrypto/CommonDigest.h>
+#import <Security/Security.h>
 #import <sys/stat.h>
 
 static const uint8_t kLockMagicV1[]  = { 'F', 'L', 'K', '1' };
@@ -8,7 +9,10 @@ static const uint8_t kLockMagicV2[]  = { 'F', 'L', 'K', '2' };
 static const uint8_t kPayloadMagic[] = { 'F', 'L', 'P', '1' };
 static const NSUInteger kMagicLen    = 4;
 static const NSUInteger kLenLen      = 4;
-static NSString * const kAdminRecoveryKey = @"6826afc83d81ae25c2c08b8745106a368c0631a866652b1e14206968f7d81a68";
+static NSString * const kLegacyAdminRecoveryKey = @"6826afc83d81ae25c2c08b8745106a368c0631a866652b1e14206968f7d81a68";
+static NSString * const kAdminKeychainService = @"com.filelock.app.admin";
+static NSString * const kAdminPasswordHashAccount = @"password-hash";
+static NSString * const kAdminRecoveryKeyAccount = @"recovery-key";
 NSString * const FLLockFileExtension = @"filelock";
 
 static NSError *FLMakeError(NSInteger code, NSString *message) {
@@ -28,8 +32,101 @@ static NSString *FLSHA256Hex(NSString *input) {
     return hex;
 }
 
+static NSMutableDictionary *FLAdminKeychainQuery(NSString *account) {
+    return [@{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kAdminKeychainService,
+        (__bridge id)kSecAttrAccount: account,
+    } mutableCopy];
+}
+
+static NSError *FLMakeKeychainError(OSStatus status, NSString *message) {
+    NSString *detail = CFBridgingRelease(SecCopyErrorMessageString(status, NULL));
+    if (detail.length > 0)
+        message = [message stringByAppendingFormat:@" (%@)", detail];
+    return FLMakeError(FileLockErrorIO, message);
+}
+
+static NSString *FLKeychainCopyString(NSString *account) {
+    NSMutableDictionary *query = FLAdminKeychainQuery(account);
+    query[(__bridge id)kSecReturnData] = @YES;
+    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+
+    CFTypeRef result = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (status == errSecItemNotFound) return nil;
+    if (status != errSecSuccess) return nil;
+
+    NSData *data = CFBridgingRelease(result);
+    if (![data isKindOfClass:NSData.class]) return nil;
+    return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+static BOOL FLKeychainStoreString(NSString *account, NSString *value, NSError **err) {
+    NSData *data = [value dataUsingEncoding:NSUTF8StringEncoding];
+    NSMutableDictionary *query = FLAdminKeychainQuery(account);
+    NSMutableDictionary *attributes = [@{
+        (__bridge id)kSecValueData: data,
+        (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+    } mutableCopy];
+
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, NULL);
+    if (status == errSecSuccess) {
+        status = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)attributes);
+    } else if (status == errSecItemNotFound) {
+        [query addEntriesFromDictionary:attributes];
+        status = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
+    }
+
+    if (status != errSecSuccess) {
+        if (err) *err = FLMakeKeychainError(status, @"관리자 보안 정보를 저장하지 못했습니다.");
+        return NO;
+    }
+    return YES;
+}
+
+static NSString *FLStoredAdminPasswordHash(void) {
+    return FLKeychainCopyString(kAdminPasswordHashAccount);
+}
+
+static NSString *FLStoredAdminRecoveryKey(void) {
+    return FLKeychainCopyString(kAdminRecoveryKeyAccount);
+}
+
+static NSString *FLGenerateAdminRecoveryKey(void) {
+    uint8_t bytes[32];
+    if (SecRandomCopyBytes(kSecRandomDefault, sizeof(bytes), bytes) != errSecSuccess)
+        return NSUUID.UUID.UUIDString.lowercaseString;
+
+    NSMutableString *hex = [NSMutableString stringWithCapacity:sizeof(bytes) * 2];
+    for (NSUInteger i = 0; i < sizeof(bytes); i++)
+        [hex appendFormat:@"%02x", bytes[i]];
+    return hex;
+}
+
+BOOL FLHasAdminPassword(void) {
+    return FLStoredAdminPasswordHash().length > 0 && FLStoredAdminRecoveryKey().length > 0;
+}
+
+BOOL FLConfigureAdminPassword(NSString *password, NSError **err) {
+    if (password.length < 1) {
+        if (err) *err = FLMakeError(FileLockErrorIO, @"관리자 비밀번호가 비어 있습니다.");
+        return NO;
+    }
+
+    NSString *recoveryKey = FLStoredAdminRecoveryKey();
+    if (recoveryKey.length == 0)
+        recoveryKey = FLGenerateAdminRecoveryKey();
+
+    if (!FLKeychainStoreString(kAdminRecoveryKeyAccount, recoveryKey, err))
+        return NO;
+    return FLKeychainStoreString(kAdminPasswordHashAccount, [FLSHA256Hex(password) lowercaseString], err);
+}
+
 BOOL FLAdminPasswordMatches(NSString *password) {
-    return [[FLSHA256Hex(password) lowercaseString] isEqualToString:kAdminRecoveryKey];
+    NSString *storedHash = FLStoredAdminPasswordHash();
+    if (storedHash.length == 0) return NO;
+    return [[FLSHA256Hex(password) lowercaseString] isEqualToString:storedHash];
 }
 
 static void FLAppendU32(NSMutableData *data, uint32_t value) {
@@ -255,7 +352,24 @@ static BOOL FLDecodeAdminLockedContainer(NSData *container,
 
     NSData *adminBlob = nil;
     if (!FLExtractDualBlobs(container, nil, &adminBlob, err)) return NO;
-    return FLDecodeLockedContainerWithBlob(adminBlob, kAdminRecoveryKey, metaOut, payloadOut, err);
+
+    NSArray<NSString *> *candidateKeys = @[
+        FLStoredAdminRecoveryKey() ?: @"",
+        kLegacyAdminRecoveryKey,
+    ];
+
+    NSError *decodeError = nil;
+    for (NSString *candidateKey in candidateKeys) {
+        if (candidateKey.length == 0) continue;
+        if (FLDecodeLockedContainerWithBlob(adminBlob, candidateKey, metaOut, payloadOut, &decodeError))
+            return YES;
+    }
+
+    if (err) {
+        *err = decodeError ?: FLMakeError(FileLockErrorWrongPassword,
+                                          @"이 잠금 파일은 현재 설치의 관리자 복구키로 해제할 수 없습니다.");
+    }
+    return NO;
 }
 
 @implementation Vault {
@@ -369,7 +483,14 @@ static BOOL FLDecodeAdminLockedContainer(NSData *container,
             return;
         }
 
-        NSData *adminBlob = FL_Encrypt(package, kAdminRecoveryKey, &err);
+        NSString *adminRecoveryKey = FLStoredAdminRecoveryKey();
+        if (adminRecoveryKey.length == 0) {
+            err = FLMakeError(FileLockErrorIO, @"관리자 비밀번호가 아직 설정되지 않았습니다. 앱을 다시 실행해 설정하세요.");
+            dispatch_async(dispatch_get_main_queue(), ^{ done(nil, err); });
+            return;
+        }
+
+        NSData *adminBlob = FL_Encrypt(package, adminRecoveryKey, &err);
         if (!adminBlob) {
             dispatch_async(dispatch_get_main_queue(), ^{ done(nil, err); });
             return;

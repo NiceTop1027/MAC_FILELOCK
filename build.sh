@@ -6,6 +6,7 @@
 set -e
 
 APP="FileLock"
+APP_VERSION="1.0.5"
 SRC="src"
 DIST="dist"
 BUNDLE="$DIST/$APP.app"
@@ -79,8 +80,8 @@ cat > "$BUNDLE/Contents/Info.plist" << 'PLIST'
   <key>CFBundleName</key>            <string>FileLock</string>
   <key>CFBundleDisplayName</key>     <string>FileLock</string>
   <key>CFBundleIdentifier</key>      <string>com.filelock.app</string>
-  <key>CFBundleVersion</key>         <string>1.0.4</string>
-  <key>CFBundleShortVersionString</key><string>1.0.4</string>
+  <key>CFBundleVersion</key>         <string>__APP_VERSION__</string>
+  <key>CFBundleShortVersionString</key><string>__APP_VERSION__</string>
   <key>CFBundleExecutable</key>      <string>FileLock</string>
   <key>CFBundleIconFile</key>        <string>FileLock.icns</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
@@ -125,10 +126,15 @@ cat > "$BUNDLE/Contents/Info.plist" << 'PLIST'
   <key>LSMinimumSystemVersion</key>  <string>13.0</string>
   <key>SUFeedURL</key>               <string>__SPARKLE_FEED_URL__</string>
   <key>SUPublicEDKey</key>           <string>__SPARKLE_PUBLIC_KEY__</string>
+  <key>SUEnableAutomaticChecks</key> <true/>
+  <key>SUAutomaticallyUpdate</key>   <true/>
+  <key>SUAllowsAutomaticUpdates</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>3600</integer>
 </dict>
 </plist>
 PLIST
 
+sed -i '' "s|__APP_VERSION__|$APP_VERSION|g" "$BUNDLE/Contents/Info.plist"
 sed -i '' "s|__LOCK_EXT__|$LOCK_EXT|g" "$BUNDLE/Contents/Info.plist"
 sed -i '' "s|__SPARKLE_FEED_URL__|$SPARKLE_FEED_URL|g" "$BUNDLE/Contents/Info.plist"
 sed -i '' "s|__SPARKLE_PUBLIC_KEY__|$SPARKLE_PUBLIC_KEY|g" "$BUNDLE/Contents/Info.plist"
