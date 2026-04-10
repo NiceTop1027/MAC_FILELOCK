@@ -1,0 +1,35 @@
+name: Build macOS Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build App And DMG
+        run: bash build.sh
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FileLock-macOS
+          path: |
+            dist/FileLock.app
+            dist/FileLock.dmg
+
+      - name: Attach DMG To Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/FileLock.dmg
